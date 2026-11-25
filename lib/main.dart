@@ -1,17 +1,41 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:call_log/call_log.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 void main() => runApp(const MyApp());
+
+const kBgTop = Color(0xFF0B1220);
+const kBgBottom = Color(0xFF16263A);
+const kCard = Color(0xFF1B2A3A);
+const kAccent = Color(0xFF1DE9B6);
+const cIn = Color(0xFF1E6FD9);
+const cOut = Color(0xFF3FA2FF);
+const cMiss = Color(0xFFE53935);
+const cRej = Color(0xFFFFA726);
+const cOther = Color(0xFF90A4AE);
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'Call Analytics',
-        theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+            brightness: Brightness.dark, colorSchemeSeed: kAccent, useMaterial3: true),
         home: const Home(),
       );
+}
+
+class Cat {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final List<CallLogEntry> list;
+  final bool showTime;
+  Cat(this.title, this.icon, this.color, this.list, this.showTime);
+  int get seconds => list.fold<int>(0, (a, c) => a + (c.duration ?? 0));
 }
 
 class Home extends StatefulWidget {
@@ -23,6 +47,7 @@ class Home extends StatefulWidget {
 class _HomeState extends State<Home> {
   List<CallLogEntry> calls = [];
   bool loading = true, denied = false;
+  int animSeed = 0;
   late DateTimeRange range;
 
   @override
@@ -47,7 +72,12 @@ class _HomeState extends State<Home> {
     final to = DateTime(range.end.year, range.end.month, range.end.day, 23, 59, 59)
         .millisecondsSinceEpoch;
     final entries = await CallLog.query(dateFrom: from, dateTo: to);
-    setState(() { calls = entries.toList(); denied = false; loading = false; });
+    setState(() {
+      calls = entries.toList();
+      denied = false;
+      loading = false;
+      animSeed++;
+    });
   }
 
   void setRange(int daysBack) {
@@ -77,11 +107,15 @@ class _HomeState extends State<Home> {
     }
   }
 
+  // ---------- helpers ----------
   String two(int n) => n.toString().padLeft(2, '0');
   String dstr(DateTime d) => '${two(d.day)}-${two(d.month)}-${d.year}';
   String fmt(int s) => s >= 3600
       ? '${s ~/ 3600}h ${(s % 3600) ~/ 60}m'
       : '${s ~/ 60}m ${s % 60}s';
+  String fmtFull(int s) => '${s ~/ 3600}h ${(s % 3600) ~/ 60}m ${s % 60}s';
+  String nameOf(CallLogEntry c) =>
+      (c.name?.isNotEmpty ?? false) ? c.name! : (c.number ?? 'Unknown');
 
   String typeLabel(CallType? t) {
     if (t == CallType.incoming) return 'Incoming';
@@ -92,146 +126,411 @@ class _HomeState extends State<Home> {
   }
 
   Color typeColor(CallType? t) {
-    if (t == CallType.incoming) return Colors.green;
-    if (t == CallType.outgoing) return Colors.blue;
-    if (t == CallType.missed) return Colors.red;
-    return Colors.grey;
+    if (t == CallType.incoming) return cIn;
+    if (t == CallType.outgoing) return cOut;
+    if (t == CallType.missed) return cMiss;
+    if (t == CallType.rejected) return cRej;
+    return cOther;
   }
 
+  // ---------- effects ----------
+  Widget fadeIn(int i, Widget child) => TweenAnimationBuilder<double>(
+        key: ValueKey('$animSeed-$i'),
+        tween: Tween(begin: 0.0, end: 1.0),
+        duration: Duration(milliseconds: 450 + i * 90),
+        curve: Curves.easeOutCubic,
+        builder: (c, t, ch) => Opacity(
+          opacity: t,
+          child: Transform.translate(offset: Offset(0, 28 * (1 - t)), child: ch),
+        ),
+        child: child,
+      );
+
+  Widget countUp(int v, TextStyle style) => TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0.0, end: v.toDouble()),
+        duration: const Duration(milliseconds: 1000),
+        curve: Curves.easeOutCubic,
+        builder: (c, t, _) => Text('${t.round()}', style: style),
+      );
+
+  Widget chip(String t, VoidCallback f) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ActionChip(
+          label: Text(t),
+          onPressed: f,
+          backgroundColor: const Color(0xFF1F3044),
+          side: BorderSide(color: kAccent.withAlpha(90)),
+          labelStyle: const TextStyle(color: Colors.white),
+        ),
+      );
+
+  // ---------- main build ----------
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Call Analytics'),
-          bottom: const TabBar(tabs: [Tab(text: 'Summary'), Tab(text: 'Daily Report')]),
-        ),
-        body: Column(children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-            child: Column(children: [
-              OutlinedButton.icon(
-                onPressed: pickRange,
-                icon: const Icon(Icons.date_range),
-                label: Text('${dstr(range.start)}  to  ${dstr(range.end)}'),
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [kBgTop, kBgBottom]),
+      ),
+      child: DefaultTabController(
+        length: 3,
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            title: const Text('Analysis',
+                style: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+            actions: [
+              IconButton(icon: const Icon(Icons.refresh), onPressed: load),
+              IconButton(icon: const Icon(Icons.calendar_month), onPressed: pickRange),
+            ],
+          ),
+          body: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: Column(children: [
+                InkWell(
+                  onTap: pickRange,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: kAccent.withAlpha(110)),
+                      color: kCard,
+                    ),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      const Icon(Icons.date_range, size: 18, color: kAccent),
+                      const SizedBox(width: 8),
+                      Text('${dstr(range.start)}   to   ${dstr(range.end)}'),
+                    ]),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    chip('Today', () => setRange(0)),
+                    chip('Yesterday', setYesterday),
+                    chip('7 days', () => setRange(6)),
+                    chip('30 days', () => setRange(29)),
+                    chip('90 days', () => setRange(89)),
+                  ]),
+                ),
+              ]),
+            ),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(color: kCard, borderRadius: BorderRadius.circular(14)),
+              child: const TabBar(
+                dividerColor: Colors.transparent,
+                indicator: UnderlineTabIndicator(
+                    borderSide: BorderSide(color: kAccent, width: 3)),
+                labelColor: kAccent,
+                unselectedLabelColor: Colors.white60,
+                labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                tabs: [Tab(text: 'Summary'), Tab(text: 'Analysis'), Tab(text: 'Daily')],
               ),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(children: [
-                  ActionChip(label: const Text('Today'), onPressed: () => setRange(0)),
-                  const SizedBox(width: 6),
-                  ActionChip(label: const Text('Yesterday'), onPressed: setYesterday),
-                  const SizedBox(width: 6),
-                  ActionChip(label: const Text('7 days'), onPressed: () => setRange(6)),
-                  const SizedBox(width: 6),
-                  ActionChip(label: const Text('30 days'), onPressed: () => setRange(29)),
-                  const SizedBox(width: 6),
-                  ActionChip(label: const Text('90 days'), onPressed: () => setRange(89)),
-                ]),
+            ),
+            Expanded(
+              child: loading
+                  ? const Center(child: CircularProgressIndicator(color: kAccent))
+                  : denied
+                      ? Center(
+                          child: FilledButton(
+                              onPressed: openAppSettings,
+                              child: const Text('Allow call log permission')))
+                      : TabBarView(children: [summary(), analysis(), daily()]),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ---------- SUMMARY TAB ----------
+  Widget summary() {
+    final inc = calls.where((c) => c.callType == CallType.incoming).toList();
+    final out = calls.where((c) => c.callType == CallType.outgoing).toList();
+    final mis = calls.where((c) => c.callType == CallType.missed).toList();
+    final rej = calls.where((c) => c.callType == CallType.rejected).toList();
+    final unknown = calls.where((c) => c.name == null || c.name!.isEmpty).toList();
+    final notPicked = out.where((c) => (c.duration ?? 0) == 0).toList();
+    final talked = calls.where((c) => (c.duration ?? 0) > 0).toList();
+    final incTalked = inc.where((c) => (c.duration ?? 0) > 0).toList();
+    final outTalked = out.where((c) => (c.duration ?? 0) > 0).toList();
+
+    final cats = <Cat>[
+      Cat('All Calls', Icons.phone_in_talk, const Color(0xFF26C6DA), calls, true),
+      Cat('Incoming Calls', Icons.call_received, cOut, inc, true),
+      Cat('Outgoing Calls', Icons.call_made, const Color(0xFFC6FF00), out, true),
+      Cat('Unknown Calls', Icons.contact_support, const Color(0xFFFF9800), unknown, true),
+      Cat('Missed Calls', Icons.call_missed, cMiss, mis, false),
+      Cat('Rejected Calls', Icons.phone_disabled, const Color(0xFFFF5252), rej, false),
+      Cat('Not Picked Outgoing', Icons.phone_missed, const Color(0xFFFF7043), notPicked, false),
+      Cat('All Talked Calls', Icons.headset_mic, const Color(0xFF00E676), talked, true),
+      Cat('Incoming Talked', Icons.headset_mic, const Color(0xFF00E676), incTalked, true),
+      Cat('Outgoing Talked', Icons.headset_mic, const Color(0xFF00E676), outTalked, true),
+    ];
+
+    final w = (MediaQuery.of(context).size.width - 32 - 10) / 2;
+
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      fadeIn(0, pieBlock(inc.length, out.length, mis.length, rej.length)),
+      const SizedBox(height: 14),
+      Wrap(spacing: 10, runSpacing: 10, children: [
+        for (var i = 0; i < cats.length; i++) catCard(cats[i], i + 1, w),
+      ]),
+      const SizedBox(height: 20),
+    ]);
+  }
+
+  Widget pieBlock(int inc, int out, int mis, int rej) {
+    final total = inc + out + mis + rej;
+    if (total == 0) {
+      return const SizedBox(
+          height: 120, child: Center(child: Text('No calls in this date range')));
+    }
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('pie$animSeed'),
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 1200),
+      curve: Curves.easeOutCubic,
+      builder: (ctx, t, _) {
+        final secs = <PieChartSectionData>[];
+        void add(int v, Color c) {
+          if (v <= 0) return;
+          final pct = v * 100 / total;
+          secs.add(PieChartSectionData(
+            value: v.toDouble(),
+            color: c,
+            radius: 95 * t,
+            showTitle: pct >= 4 && t > 0.85,
+            title: '${pct.toStringAsFixed(1)} %',
+            titlePositionPercentageOffset: 0.65,
+            titleStyle: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+          ));
+        }
+
+        add(inc, cIn);
+        add(out, cOut);
+        add(mis, cMiss);
+        add(rej, cRej);
+
+        return SizedBox(
+          height: 230,
+          child: Row(children: [
+            Expanded(
+              child: Stack(alignment: Alignment.center, children: [
+                Container(
+                  width: 170,
+                  height: 170,
+                  decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [
+                    BoxShadow(color: cOut.withAlpha(70), blurRadius: 50, spreadRadius: 6)
+                  ]),
+                ),
+                PieChart(PieChartData(
+                  sections: secs,
+                  sectionsSpace: 1,
+                  centerSpaceRadius: 0,
+                  startDegreeOffset: -90 + 120 * (1 - t),
+                )),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 8, right: 4),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final e in [
+                    ('Incoming', cIn),
+                    ('Outgoing', cOut),
+                    ('Missed', cMiss),
+                    ('Rejected', cRej),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 7),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: e.$2,
+                            shape: BoxShape.circle,
+                            boxShadow: [BoxShadow(color: e.$2.withAlpha(150), blurRadius: 8)],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(e.$1, style: const TextStyle(fontSize: 13)),
+                      ]),
+                    ),
+                ],
+              ),
+            ),
+          ]),
+        );
+      },
+    );
+  }
+
+  Widget catCard(Cat c, int i, double w) {
+    return fadeIn(
+      i,
+      GestureDetector(
+        onTap: () => showList(c),
+        child: Container(
+          width: w,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF2A3B4F), Color(0xFF1E2C3D)],
+            ),
+            border: Border.all(color: c.color.withAlpha(80)),
+            boxShadow: [
+              BoxShadow(color: c.color.withAlpha(45), blurRadius: 14, offset: const Offset(0, 4))
+            ],
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: c.color, width: 1.5),
+                  boxShadow: [BoxShadow(color: c.color.withAlpha(90), blurRadius: 8)],
+                ),
+                child: Icon(c.icon, color: c.color, size: 18),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(c.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
               ),
             ]),
+            const SizedBox(height: 12),
+            Row(children: [
+              const Icon(Icons.phone, size: 16, color: Colors.white54),
+              const SizedBox(width: 10),
+              countUp(c.list.length,
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            ]),
+            if (c.showTime) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const Icon(Icons.timer_outlined, size: 16, color: Colors.white54),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(fmtFull(c.seconds),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13.5)),
+                ),
+              ]),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
+
+  void showList(Cat c) {
+    final list = [...c.list]..sort((a, b) => (b.timestamp ?? 0).compareTo(a.timestamp ?? 0));
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF16222F),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        builder: (ctx, sc) => Column(children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('${c.title}  (${list.length})',
+                style: Theme.of(context).textTheme.titleMedium),
           ),
           Expanded(
-            child: loading
-                ? const Center(child: CircularProgressIndicator())
-                : denied
-                    ? Center(child: FilledButton(onPressed: openAppSettings, child: const Text('Allow call log permission')))
-                    : TabBarView(children: [summary(), daily()]),
+            child: list.isEmpty
+                ? const Center(child: Text('No calls'))
+                : ListView.builder(
+                    controller: sc,
+                    itemCount: list.length,
+                    itemBuilder: (_, i) {
+                      final e = list[i];
+                      final t = DateTime.fromMillisecondsSinceEpoch(e.timestamp ?? 0);
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(Icons.phone, color: typeColor(e.callType), size: 20),
+                        title: Text(nameOf(e)),
+                        subtitle: Text(
+                            '${typeLabel(e.callType)}  •  ${dstr(t)}  ${two(t.hour)}:${two(t.minute)}'),
+                        trailing: Text(fmt(e.duration ?? 0)),
+                      );
+                    },
+                  ),
           ),
         ]),
       ),
     );
   }
 
-  Widget summary() {
-    final incoming = calls.where((c) => c.callType == CallType.incoming).length;
-    final outgoing = calls.where((c) => c.callType == CallType.outgoing).length;
-    final missed = calls.where((c) => c.callType == CallType.missed).length;
-    final talk = calls.fold<int>(0, (a, c) => a + (c.duration ?? 0));
-    final hours = List<int>.filled(24, 0);
-    final contacts = <String, int>{};
-    for (final c in calls) {
-      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
-      hours[t.hour]++;
-      final k = (c.name?.isNotEmpty ?? false) ? c.name! : (c.number ?? 'Unknown');
-      contacts[k] = (contacts[k] ?? 0) + 1;
-    }
-    final top = contacts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-    final maxH = hours.reduce((a, b) => a > b ? a : b);
-
-    return ListView(padding: const EdgeInsets.all(16), children: [
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        stat('Total', '${calls.length}'),
-        stat('Incoming', '$incoming'),
-        stat('Outgoing', '$outgoing'),
-        stat('Missed', '$missed'),
-        stat('Talk time', fmt(talk)),
-      ]),
-      const SizedBox(height: 20),
-      Text('Busiest hours', style: Theme.of(context).textTheme.titleMedium),
-      for (var h = 0; h < 24; h++)
-        if (hours[h] > 0)
-          Row(children: [
-            SizedBox(width: 44, child: Text('${two(h)}:00')),
-            Expanded(child: LinearProgressIndicator(value: hours[h] / maxH, minHeight: 10)),
-            SizedBox(width: 36, child: Text(' ${hours[h]}')),
-          ]),
-      const SizedBox(height: 20),
-      Text('Top contacts', style: Theme.of(context).textTheme.titleMedium),
-      for (final e in top.take(10))
-        ListTile(dense: true, title: Text(e.key), trailing: Text('${e.value}')),
-    ]);
-  }
-
-  Widget daily() {
-    if (calls.isEmpty) return const Center(child: Text('No calls in this date range'));
-    final byDay = <DateTime, List<CallLogEntry>>{};
-    for (final c in calls) {
-      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
-      final k = DateTime(t.year, t.month, t.day);
-      byDay.putIfAbsent(k, () => []).add(c);
-    }
-    final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
-
-    return ListView(padding: const EdgeInsets.all(12), children: [
-      for (final d in days) dayCard(d, byDay[d]!),
-    ]);
-  }
-
-  Widget dayCard(DateTime d, List<CallLogEntry> list) {
-    final inc = list.where((c) => c.callType == CallType.incoming).length;
-    final out = list.where((c) => c.callType == CallType.outgoing).length;
-    final mis = list.where((c) => c.callType == CallType.missed).length;
-    final talk = list.fold<int>(0, (a, c) => a + (c.duration ?? 0));
-    list.sort((a, b) => (b.timestamp ?? 0).compareTo(a.timestamp ?? 0));
-
-    return Card(
-      child: ExpansionTile(
-        title: Text('${dstr(d)}   •   ${list.length} calls'),
-        subtitle: Text('In $inc  |  Out $out  |  Missed $mis  |  Talk ${fmt(talk)}'),
-        children: [
-          for (final c in list)
-            ListTile(
-              dense: true,
-              leading: Icon(Icons.phone, color: typeColor(c.callType), size: 20),
-              title: Text((c.name?.isNotEmpty ?? false) ? c.name! : (c.number ?? 'Unknown')),
-              subtitle: Text(
-                  '${typeLabel(c.callType)}  •  ${two(DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).hour)}:${two(DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).minute)}'),
-              trailing: Text(fmt(c.duration ?? 0)),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget stat(String l, String v) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(children: [
-            Text(v, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-            Text(l),
+  // ---------- ANALYSIS TAB ----------
+  Widget panel(String title, Widget child, int i) => fadeIn(
+        i,
+        Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: kCard,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 8),
+            child,
           ]),
         ),
       );
-}
+
+  Widget barBox(List<BarChartGroupData> groups, List<String> labels) {
+    final w = max(MediaQuery.of(context).size.width - 64, groups.length * 26.0);
+    return SizedBox(
+      height: 200,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: w,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 12, right: 8),
+            child: BarChart(BarChartData(
+              barGroups: groups,
+              gridData: FlGridData(
+                show: true,
+                drawVerticalLine: false,
+                getDrawingHorizontalLine: (v) =>
+                    const FlLine(color: Colors.white12, strokeWidth: 1),
+              ),
+              borderData: FlBorderData(show: false),
+              titlesData: FlTitlesData(
+                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 30,
+                    
