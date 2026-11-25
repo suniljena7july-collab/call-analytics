@@ -303,8 +303,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
       ),
     );
   }
-
-  // ---------- SUMMARY TAB ----------
+    // ---------- SUMMARY TAB ----------
   Widget summary() {
     final inc = calls.where((c) => c.callType == CallType.incoming).toList();
     final out = calls.where((c) => c.callType == CallType.outgoing).toList();
@@ -529,4 +528,496 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                         leading: Icon(Icons.phone, color: typeColor(e.callType), size: 20),
                         title: Text(nameOf(e)),
                         subtitle: Text(
-                            '${typeLabel(e.callType)}  •  ${dstr(t)}  ${two(t.hour
+                            '${typeLabel(e.callType)}  •  ${dstr(t)}  ${two(t.hour)}:${two(t.minute)}'),
+                        trailing: Text(fmt(e.duration ?? 0)),
+                      );
+                    },
+                  ),
+          ),
+        ]),
+      ),
+    );
+  }
+  // ---------- ANALYSIS TAB ----------
+  Widget panel(String title, Widget child, int i) => fadeIn(
+        i,
+        Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: kCard.withAlpha(215),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 8),
+            child,
+          ]),
+        ),
+      );
+
+  Widget barBox(List<BarChartGroupData> groups, List<String> labels) {
+    final w = max(MediaQuery.of(context).size.width - 64, groups.length * 26.0);
+    return SizedBox(
+      height: 200,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: w,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 12, right: 8),
+            child: BarChart(BarChartData(
+              barGroups: groups,
+              gridData: FlGridData(
+                show: true,
+                drawVerticalLine: false,
+                getDrawingHorizontalLine: (v) =>
+                    const FlLine(color: Colors.white12, strokeWidth: 1),
+              ),
+              borderData: FlBorderData(show: false),
+              titlesData: FlTitlesData(
+                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 30,
+                    getTitlesWidget: (v, meta) => Text(
+                      v == v.roundToDouble() ? '${v.toInt()}' : '',
+                      style: const TextStyle(fontSize: 10, color: Colors.white70),
+                    ),
+                  ),
+                ),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 24,
+                    interval: 1,
+                    getTitlesWidget: (v, meta) {
+                      final i = v.toInt();
+                      if (i < 0 || i >= labels.length || labels[i].isEmpty) {
+                        return const SizedBox();
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(labels[i],
+                            style: const TextStyle(fontSize: 10, color: Colors.white70)),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            )),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget analysis() {
+    if (calls.isEmpty) return const Center(child: Text('No calls in this date range'));
+
+    final hours = List<int>.filled(24, 0);
+    final contacts = <String, int>{};
+    // per day: [in, out, missed, rejected, other, talkSeconds]
+    final perDay = <DateTime, List<int>>{};
+    for (final c in calls) {
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      hours[t.hour]++;
+      final k = nameOf(c);
+      contacts[k] = (contacts[k] ?? 0) + 1;
+      final dk = DateTime(t.year, t.month, t.day);
+      final r = perDay.putIfAbsent(dk, () => [0, 0, 0, 0, 0, 0]);
+      if (c.callType == CallType.incoming) {
+        r[0]++;
+      } else if (c.callType == CallType.outgoing) {
+        r[1]++;
+      } else if (c.callType == CallType.missed) {
+        r[2]++;
+      } else if (c.callType == CallType.rejected) {
+        r[3]++;
+      } else {
+        r[4]++;
+      }
+      r[5] += c.duration ?? 0;
+    }
+    final top = contacts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+
+    final days = <DateTime>[];
+    for (var d = range.start; !d.isAfter(range.end); d = DateTime(d.year, d.month, d.day + 1)) {
+      days.add(d);
+    }
+    final step = days.length > 31 ? 3 : 1;
+    final dayLabels = [
+      for (var i = 0; i < days.length; i++)
+        (i % step == 0) ? '${two(days[i].day)}/${two(days[i].month)}' : ''
+    ];
+
+    const stackColors = [cIn, cOut, cMiss, cRej, cOther];
+    final callGroups = <BarChartGroupData>[];
+    final talkGroups = <BarChartGroupData>[];
+    for (var i = 0; i < days.length; i++) {
+      final r = perDay[days[i]] ?? [0, 0, 0, 0, 0, 0];
+      var from = 0.0;
+      final items = <BarChartRodStackItem>[];
+      for (var k = 0; k < 5; k++) {
+        final to = from + r[k];
+        if (r[k] > 0) items.add(BarChartRodStackItem(from, to, stackColors[k]));
+        from = to;
+      }
+      callGroups.add(BarChartGroupData(x: i, barRods: [
+        BarChartRodData(
+            toY: from, width: 14, borderRadius: BorderRadius.zero, rodStackItems: items),
+      ]));
+      talkGroups.add(BarChartGroupData(x: i, barRods: [
+        BarChartRodData(
+          toY: double.parse((r[5] / 60).toStringAsFixed(1)),
+          width: 14,
+          color: kAccent,
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ]));
+    }
+
+    final hourGroups = [
+      for (var h = 0; h < 24; h++)
+        BarChartGroupData(x: h, barRods: [
+          BarChartRodData(
+            toY: hours[h].toDouble(),
+            width: 12,
+            color: const Color(0xFFB388FF),
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ])
+    ];
+    final hourLabels = [for (var h = 0; h < 24; h++) (h % 3 == 0) ? two(h) : ''];
+
+    Widget dot(Color c, String t) => Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+            const SizedBox(width: 4),
+            Text(t, style: const TextStyle(fontSize: 12)),
+          ]),
+        );
+
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      panel(
+        'Calls per day',
+        Column(children: [
+          Wrap(children: [
+            dot(cIn, 'Incoming'),
+            dot(cOut, 'Outgoing'),
+            dot(cMiss, 'Missed'),
+            dot(cRej, 'Rejected'),
+          ]),
+          barBox(callGroups, dayLabels),
+        ]),
+        0,
+      ),
+      panel('Talk time per day (minutes)', barBox(talkGroups, dayLabels), 1),
+      panel('Calls by hour of day', barBox(hourGroups, hourLabels), 2),
+      panel(
+        'Top contacts',
+        Column(children: [
+          for (final e in top.take(10))
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(e.key),
+              trailing: Text('${e.value}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: kAccent)),
+            ),
+        ]),
+        3,
+      ),
+    ]);
+  }
+    // ---------- SHARE / EXPORT ----------
+  void toast(String m) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+  }
+
+  void onShareMenu(String v) {
+    if (calls.isEmpty) {
+      toast('No calls in this date range');
+      return;
+    }
+    if (v == 'text') shareSummary();
+    if (v == 'csv_all') shareCsv('all_calls', allCallsCsv());
+    if (v == 'csv_daily') shareCsv('daily_report', dailyCsv());
+    if (v == 'csv_hourly') shareCsv('hourly_report', hourlyCsv());
+  }
+
+  String csvCell(Object? v) => '"${(v ?? '').toString().replaceAll('"', '""')}"';
+  String csvRow(List<Object?> r) => r.map(csvCell).join(',');
+  String stamp() =>
+      '${range.start.year}${two(range.start.month)}${two(range.start.day)}_${range.end.year}${two(range.end.month)}${two(range.end.day)}';
+
+  Future<void> shareCsv(String name, List<String> lines) async {
+    try {
+      final f = File('${Directory.systemTemp.path}/${name}_${stamp()}.csv');
+      await f.writeAsString('\uFEFF${lines.join('\n')}\n');
+      await Share.shareXFiles(
+        [XFile(f.path, mimeType: 'text/csv')],
+        text: 'Call report ${dstr(range.start)} to ${dstr(range.end)}',
+      );
+    } catch (e) {
+      toast('Share failed: $e');
+    }
+  }
+
+  List<Object> statsRow(List<CallLogEntry> l) {
+    final inc = l.where((c) => c.callType == CallType.incoming).length;
+    final out = l.where((c) => c.callType == CallType.outgoing).length;
+    final mis = l.where((c) => c.callType == CallType.missed).length;
+    final rej = l.where((c) => c.callType == CallType.rejected).length;
+    final talk = l.fold<int>(0, (a, c) => a + (c.duration ?? 0));
+    return [l.length, inc, out, mis, rej, talk, fmtFull(talk)];
+  }
+
+  List<String> allCallsCsv() {
+    final list = [...calls]..sort((a, b) => (b.timestamp ?? 0).compareTo(a.timestamp ?? 0));
+    final rows = <String>[
+      csvRow(['Date', 'Time', 'Name', 'Number', 'Type', 'Duration (sec)', 'Duration']),
+    ];
+    for (final c in list) {
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      rows.add(csvRow([
+        dstr(t),
+        '${two(t.hour)}:${two(t.minute)}',
+        c.name ?? '',
+        c.number ?? '',
+        typeLabel(c.callType),
+        c.duration ?? 0,
+        fmtFull(c.duration ?? 0),
+      ]));
+    }
+    return rows;
+  }
+
+  List<String> dailyCsv() {
+    final byDay = <DateTime, List<CallLogEntry>>{};
+    for (final c in calls) {
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      byDay.putIfAbsent(DateTime(t.year, t.month, t.day), () => []).add(c);
+    }
+    final days = byDay.keys.toList()..sort();
+    final rows = <String>[
+      csvRow(['Date', 'Total', 'Incoming', 'Outgoing', 'Missed', 'Rejected', 'Talk time (sec)', 'Talk time']),
+    ];
+    for (final d in days) {
+      rows.add(csvRow([dstr(d), ...statsRow(byDay[d]!)]));
+    }
+    return rows;
+  }
+
+  List<String> hourlyCsv() {
+    final byHour = List.generate(24, (_) => <CallLogEntry>[]);
+    for (final c in calls) {
+      byHour[DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).hour].add(c);
+    }
+    final rows = <String>[
+      csvRow(['Hour', 'Total', 'Incoming', 'Outgoing', 'Missed', 'Rejected', 'Talk time (sec)', 'Talk time']),
+    ];
+    for (var h = 0; h < 24; h++) {
+      if (byHour[h].isEmpty) continue;
+      rows.add(csvRow(['${hlabel(h)} - ${hlabel((h + 1) % 24)}', ...statsRow(byHour[h])]));
+    }
+    return rows;
+  }
+
+  Future<void> shareSummary() async {
+    final st = statsRow(calls);
+    final byHour = List.generate(24, (_) => 0);
+    final byDay = <DateTime, List<CallLogEntry>>{};
+    for (final c in calls) {
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      byHour[t.hour]++;
+      byDay.putIfAbsent(DateTime(t.year, t.month, t.day), () => []).add(c);
+    }
+    final maxN = byHour.reduce(max);
+    final peak = byHour.indexOf(maxN);
+
+    final b = StringBuffer();
+    b.writeln('*Call Report*');
+    b.writeln('${dstr(range.start)} to ${dstr(range.end)}');
+    b.writeln('');
+    b.writeln('Total calls: ${st[0]}');
+    b.writeln('Incoming: ${st[1]}');
+    b.writeln('Outgoing: ${st[2]}');
+    b.writeln('Missed: ${st[3]}');
+    b.writeln('Rejected: ${st[4]}');
+    b.writeln('Talk time: ${st[6]}');
+    b.writeln('Peak hour: ${hlabel(peak)} - ${hlabel((peak + 1) % 24)} ($maxN calls)');
+    final days = byDay.keys.toList()..sort();
+    if (days.length > 1 && days.length <= 31) {
+      b.writeln('');
+      b.writeln('*Day wise*');
+      for (final d in days) {
+        final l = byDay[d]!;
+        final talk = l.fold<int>(0, (a, c) => a + (c.duration ?? 0));
+        b.writeln('${dstr(d)}: ${l.length} calls, talk ${fmt(talk)}');
+      }
+    }
+    try {
+      await Share.share(b.toString().trim(), subject: 'Call Report');
+    } catch (e) {
+      toast('Share failed: $e');
+    }
+  }
+
+  // ---------- HOURLY TAB ----------
+  String hlabel(int h) {
+    final p = h >= 12 ? 'PM' : 'AM';
+    final x = h % 12 == 0 ? 12 : h % 12;
+    return '$x $p';
+  }
+
+  Widget hourly() {
+    if (calls.isEmpty) return const Center(child: Text('No calls in this date range'));
+    final byHour = List.generate(24, (_) => <CallLogEntry>[]);
+    for (final c in calls) {
+      byHour[DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).hour].add(c);
+    }
+    final maxN = byHour.map((l) => l.length).reduce(max);
+    final peak = byHour.indexWhere((l) => l.length == maxN);
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      fadeIn(
+        0,
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+                colors: [kAccent.withAlpha(60), const Color(0xFF7C4DFF).withAlpha(60)]),
+            border: Border.all(color: kAccent.withAlpha(110)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.local_fire_department, color: kAccent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                  'Peak hour: ${hlabel(peak)} - ${hlabel((peak + 1) % 24)}  ($maxN calls)',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ]),
+        ),
+      ),
+      for (var h = 0; h < 24; h++)
+        if (byHour[h].isNotEmpty) fadeIn(min(h, 8), hourCard(h, byHour[h], maxN)),
+    ]);
+  }
+
+  Widget hourCard(int h, List<CallLogEntry> list, int maxN) {
+    final inc = list.where((c) => c.callType == CallType.incoming).length;
+    final out = list.where((c) => c.callType == CallType.outgoing).length;
+    final mis = list.where((c) => c.callType == CallType.missed).length;
+    final talk = list.fold<int>(0, (a, c) => a + (c.duration ?? 0));
+    final title = '${hlabel(h)} - ${hlabel((h + 1) % 24)}';
+
+    Widget mini(Color c, String t) => Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+          const SizedBox(width: 5),
+          Text(t, style: const TextStyle(fontSize: 12.5)),
+        ]);
+
+    return GestureDetector(
+      onTap: () => showList(Cat(title, Icons.access_time, kAccent, list, true)),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: kCard.withAlpha(215),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            const Spacer(),
+            Text('${list.length} calls',
+                style: const TextStyle(fontWeight: FontWeight.bold, color: kAccent)),
+          ]),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: list.length / maxN,
+              minHeight: 8,
+              backgroundColor: Colors.white10,
+              color: kAccent,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(spacing: 14, runSpacing: 4, children: [
+            mini(cIn, 'In $inc'),
+            mini(cOut, 'Out $out'),
+            mini(cMiss, 'Missed $mis'),
+            mini(Colors.white70, 'Talk ${fmt(talk)}'),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  // ---------- DAILY TAB ----------
+  Widget daily() {
+    if (calls.isEmpty) return const Center(child: Text('No calls in this date range'));
+    final byDay = <DateTime, List<CallLogEntry>>{};
+    for (final c in calls) {
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      byDay.putIfAbsent(DateTime(t.year, t.month, t.day), () => []).add(c);
+    }
+    final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      for (var i = 0; i < days.length; i++)
+        fadeIn(min(i, 8), dayCard(days[i], byDay[days[i]]!)),
+    ]);
+  }
+
+  Widget dayCard(DateTime d, List<CallLogEntry> list) {
+    final inc = list.where((c) => c.callType == CallType.incoming).length;
+    final out = list.where((c) => c.callType == CallType.outgoing).length;
+    final mis = list.where((c) => c.callType == CallType.missed).length;
+    final talk = list.fold<int>(0, (a, c) => a + (c.duration ?? 0));
+    list.sort((a, b) => (b.timestamp ?? 0).compareTo(a.timestamp ?? 0));
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: kCard.withAlpha(215),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          title: Text('${dstr(d)}   •   ${list.length} calls',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: Text('In $inc  |  Out $out  |  Missed $mis  |  Talk ${fmt(talk)}'),
+          children: [
+            for (final c in list)
+              ListTile(
+                dense: true,
+                leading: Icon(Icons.phone, color: typeColor(c.callType), size: 20),
+                title: Text(nameOf(c)),
+                subtitle: Text(
+                    '${typeLabel(c.callType)}  •  ${two(DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).hour)}:${two(DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).minute)}'),
+                trailing: Text(fmt(c.duration ?? 0)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
