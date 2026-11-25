@@ -533,4 +533,210 @@ class _HomeState extends State<Home> {
                   sideTitles: SideTitles(
                     showTitles: true,
                     reservedSize: 30,
+                                        getTitlesWidget: (v, meta) => Text(
+                      v == v.roundToDouble() ? '${v.toInt()}' : '',
+                      style: const TextStyle(fontSize: 10, color: Colors.white70),
+                    ),
+                  ),
+                ),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 24,
+                    interval: 1,
+                    getTitlesWidget: (v, meta) {
+                      final i = v.toInt();
+                      if (i < 0 || i >= labels.length || labels[i].isEmpty) {
+                        return const SizedBox();
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(labels[i],
+                            style: const TextStyle(fontSize: 10, color: Colors.white70)),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            )),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget analysis() {
+    if (calls.isEmpty) return const Center(child: Text('No calls in this date range'));
+
+    final hours = List<int>.filled(24, 0);
+    final contacts = <String, int>{};
+    // per day: [in, out, missed, rejected, other, talkSeconds]
+    final perDay = <DateTime, List<int>>{};
+    for (final c in calls) {
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      hours[t.hour]++;
+      final k = nameOf(c);
+      contacts[k] = (contacts[k] ?? 0) + 1;
+      final dk = DateTime(t.year, t.month, t.day);
+      final r = perDay.putIfAbsent(dk, () => [0, 0, 0, 0, 0, 0]);
+      if (c.callType == CallType.incoming) {
+        r[0]++;
+      } else if (c.callType == CallType.outgoing) {
+        r[1]++;
+      } else if (c.callType == CallType.missed) {
+        r[2]++;
+      } else if (c.callType == CallType.rejected) {
+        r[3]++;
+      } else {
+        r[4]++;
+      }
+      r[5] += c.duration ?? 0;
+    }
+    final top = contacts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+
+    final days = <DateTime>[];
+    for (var d = range.start; !d.isAfter(range.end); d = DateTime(d.year, d.month, d.day + 1)) {
+      days.add(d);
+    }
+    final step = days.length > 31 ? 3 : 1;
+    final dayLabels = [
+      for (var i = 0; i < days.length; i++)
+        (i % step == 0) ? '${two(days[i].day)}/${two(days[i].month)}' : ''
+    ];
+
+    const stackColors = [cIn, cOut, cMiss, cRej, cOther];
+    final callGroups = <BarChartGroupData>[];
+    final talkGroups = <BarChartGroupData>[];
+    for (var i = 0; i < days.length; i++) {
+      final r = perDay[days[i]] ?? [0, 0, 0, 0, 0, 0];
+      var from = 0.0;
+      final items = <BarChartRodStackItem>[];
+      for (var k = 0; k < 5; k++) {
+        final to = from + r[k];
+        if (r[k] > 0) items.add(BarChartRodStackItem(from, to, stackColors[k]));
+        from = to;
+      }
+      callGroups.add(BarChartGroupData(x: i, barRods: [
+        BarChartRodData(
+            toY: from, width: 14, borderRadius: BorderRadius.zero, rodStackItems: items),
+      ]));
+      talkGroups.add(BarChartGroupData(x: i, barRods: [
+        BarChartRodData(
+          toY: double.parse((r[5] / 60).toStringAsFixed(1)),
+          width: 14,
+          color: kAccent,
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ]));
+    }
+
+    final hourGroups = [
+      for (var h = 0; h < 24; h++)
+        BarChartGroupData(x: h, barRods: [
+          BarChartRodData(
+            toY: hours[h].toDouble(),
+            width: 12,
+            color: const Color(0xFFB388FF),
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ])
+    ];
+    final hourLabels = [for (var h = 0; h < 24; h++) (h % 3 == 0) ? two(h) : ''];
+
+    Widget dot(Color c, String t) => Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+            const SizedBox(width: 4),
+            Text(t, style: const TextStyle(fontSize: 12)),
+          ]),
+        );
+
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      panel(
+        'Calls per day',
+        Column(children: [
+          Wrap(children: [
+            dot(cIn, 'Incoming'),
+            dot(cOut, 'Outgoing'),
+            dot(cMiss, 'Missed'),
+            dot(cRej, 'Rejected'),
+          ]),
+          barBox(callGroups, dayLabels),
+        ]),
+        0,
+      ),
+      panel('Talk time per day (minutes)', barBox(talkGroups, dayLabels), 1),
+      panel('Calls by hour of day', barBox(hourGroups, hourLabels), 2),
+      panel(
+        'Top contacts',
+        Column(children: [
+          for (final e in top.take(10))
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(e.key),
+              trailing: Text('${e.value}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: kAccent)),
+            ),
+        ]),
+        3,
+      ),
+    ]);
+  }
+
+  // ---------- DAILY TAB ----------
+  Widget daily() {
+    if (calls.isEmpty) return const Center(child: Text('No calls in this date range'));
+    final byDay = <DateTime, List<CallLogEntry>>{};
+    for (final c in calls) {
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      byDay.putIfAbsent(DateTime(t.year, t.month, t.day), () => []).add(c);
+    }
+    final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      for (var i = 0; i < days.length; i++)
+        fadeIn(min(i, 8), dayCard(days[i], byDay[days[i]]!)),
+    ]);
+  }
+
+  Widget dayCard(DateTime d, List<CallLogEntry> list) {
+    final inc = list.where((c) => c.callType == CallType.incoming).length;
+    final out = list.where((c) => c.callType == CallType.outgoing).length;
+    final mis = list.where((c) => c.callType == CallType.missed).length;
+    final talk = list.fold<int>(0, (a, c) => a + (c.duration ?? 0));
+    list.sort((a, b) => (b.timestamp ?? 0).compareTo(a.timestamp ?? 0));
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          title: Text('${dstr(d)}   •   ${list.length} calls',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: Text('In $inc  |  Out $out  |  Missed $mis  |  Talk ${fmt(talk)}'),
+          children: [
+            for (final c in list)
+              ListTile(
+                dense: true,
+                leading: Icon(Icons.phone, color: typeColor(c.callType), size: 20),
+                title: Text(nameOf(c)),
+                subtitle: Text(
+                    '${typeLabel(c.callType)}  •  ${two(DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).hour)}:${two(DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).minute)}'),
+                trailing: Text(fmt(c.duration ?? 0)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
                     
