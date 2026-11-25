@@ -1,0 +1,13 @@
+name: call_analytics
+description: Call log analytics app
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
+  call_log: ^5.0.0
+  permission_handler: ^11.3.1
+flutter:
+  uses-material-design: true
