@@ -303,7 +303,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
       ),
     );
   }
-    // ---------- SUMMARY TAB ----------
+  // ---------- SUMMARY TAB ----------
   Widget summary() {
     final inc = calls.where((c) => c.callType == CallType.incoming).toList();
     final out = calls.where((c) => c.callType == CallType.outgoing).toList();
@@ -538,7 +538,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
       ),
     );
   }
-  // ---------- ANALYSIS TAB ----------
+    // ---------- ANALYSIS TAB ----------
   Widget panel(String title, Widget child, int i) => fadeIn(
         i,
         Container(
@@ -737,7 +737,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
       ),
     ]);
   }
-    // ---------- SHARE / EXPORT ----------
+  // ---------- SHARE / EXPORT ----------
   void toast(String m) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
@@ -818,16 +818,24 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
   }
 
   List<String> hourlyCsv() {
-    final byHour = List.generate(24, (_) => <CallLogEntry>[]);
+    final groups = <String, List<CallLogEntry>>{};
     for (final c in calls) {
-      byHour[DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0).hour].add(c);
+      final t = DateTime.fromMillisecondsSinceEpoch(c.timestamp ?? 0);
+      final k = '${t.year}${two(t.month)}${two(t.day)}${two(t.hour)}';
+      groups.putIfAbsent(k, () => []).add(c);
     }
+    final keys = groups.keys.toList()..sort();
     final rows = <String>[
-      csvRow(['Hour', 'Total', 'Incoming', 'Outgoing', 'Missed', 'Rejected', 'Talk time (sec)', 'Talk time']),
+      csvRow(['Date', 'Hour', 'Total', 'Incoming', 'Outgoing', 'Missed', 'Rejected', 'Talk time (sec)', 'Talk time']),
     ];
-    for (var h = 0; h < 24; h++) {
-      if (byHour[h].isEmpty) continue;
-      rows.add(csvRow(['${hlabel(h)} - ${hlabel((h + 1) % 24)}', ...statsRow(byHour[h])]));
+    for (final k in keys) {
+      final l = groups[k]!;
+      final t = DateTime.fromMillisecondsSinceEpoch(l.first.timestamp ?? 0);
+      rows.add(csvRow([
+        dstr(t),
+        '${hlabel(t.hour)} - ${hlabel((t.hour + 1) % 24)}',
+        ...statsRow(l),
+      ]));
     }
     return rows;
   }
